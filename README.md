@@ -1,17 +1,18 @@
-## My Project
+# Amazon QLDB Export Processor
 
-TODO: Fill this README out!
+This library makes it easy to process the blocks and revisions of a [QLDB export](https://docs.aws.amazon.com/qldb/latest/developerguide/export-journal.html).  The
+library handles the logic of reading the export's files and iterating of the
+blocks in the export in sequence.  Users of the library simply have to plug
+instances of `BlockVisitor` or `RevisionVisitor` into the framework to perform
+the work they need on the export's data.
 
-Be sure to:
+The library provides several example implementations in the `software.amazon.qldb.export.app` package,
+including an integration with the amazon-qldb-ledger-load ledger load project.
 
-* Change the title in this README
-* Edit your repository description on GitHub
+## Setup
 
-## Security
+Build the project with the following command and add it as a dependency to your project.
 
-See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
-
-## License
-
-This library is licensed under the MIT-0 License. See the LICENSE file.
-
+```bash
+mvnw install
+```

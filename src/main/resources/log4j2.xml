@@ -1,0 +1,16 @@
+<Configuration status="WARN">
+    <Appenders>
+        <Console name="STDOUT">
+            <PatternLayout>
+                <pattern>%d{ISO8601_OFFSET_DATE_TIME_HHCMM} %-5p %c{10} - %m%n</pattern>
+            </PatternLayout>
+        </Console>
+    </Appenders>
+    <Loggers>
+        <Root level="WARN">
+            <AppenderRef ref="STDOUT"/>
+        </Root>
+        <Logger name="software.amazon.awssdk" level="WARN" />
+        <Logger name="software.amazon.qldb" level="INFO" />
+    </Loggers>
+</Configuration>
