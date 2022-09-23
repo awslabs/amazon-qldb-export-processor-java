@@ -76,6 +76,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         <maven.surefire.plugin.version>3.0.0-M5</maven.surefire.plugin.version>
         <maven.javadoc.plugin.version>3.3.1</maven.javadoc.plugin.version>
         <maven.source.plugin.version>3.2.1</maven.source.plugin.version>
+        <maven.shade.plugin.version>3.2.4</maven.shade.plugin.version>
         <maven.jxr.plugin.version>2.3</maven.jxr.plugin.version>
         <maven.gpg.plugin.version>1.6</maven.gpg.plugin.version>
         <nexus.staging.maven.plugin.version>1.6.7</nexus.staging.maven.plugin.version>
@@ -86,6 +87,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         <log4j.version>2.17.1</log4j.version>
         <junit.jupiter.version>5.8.2</junit.jupiter.version>
+        <edwgiz.cachefile.transformer.version>2.15</edwgiz.cachefile.transformer.version>
 
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -229,6 +231,40 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     </execution>
                 </executions>
             </plugin>
+
+            <!-- Build the uber-jar for Lambda deployment -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>${maven.shade.plugin.version}</version>
+                <configuration>
+                    <createDependencyReducedPom>false</createDependencyReducedPom>
+                </configuration>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <transformers>
+                                <transformer implementation="com.github.edwgiz.maven_shade_plugin.log4j2_cache_transformer.PluginsCacheFileTransformer">
+                                </transformer>
+                            </transformers>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>deploy-pkg</shadedClassifierName>
+                        </configuration>
+                    </execution>
+                </executions>
+                <dependencies>
+                    <dependency>
+                        <groupId>com.github.edwgiz</groupId>
+                        <artifactId>maven-shade-plugin.log4j2-cachefile-transformer</artifactId>
+                        <version>${edwgiz.cachefile.transformer.version}</version>
+                    </dependency>
+                </dependencies>
+            </plugin>
+
 
             <!-- GPG signing. -->
             <plugin>
