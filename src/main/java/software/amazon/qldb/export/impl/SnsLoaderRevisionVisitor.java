@@ -64,7 +64,7 @@ public class SnsLoaderRevisionVisitor implements RevisionVisitor {
     }
 
     @Override
-    public void visit(IonStruct revision, String tableName) {
+    public void visit(IonStruct revision, String tableId, String tableName) {
         LoadEvent event = LoadEvent.fromCommittedRevision(revision, tableName);
 
         PublishRequest.Builder builder = PublishRequest.builder();

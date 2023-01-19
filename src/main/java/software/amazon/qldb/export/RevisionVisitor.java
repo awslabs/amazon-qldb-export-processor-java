@@ -31,13 +31,18 @@ public interface RevisionVisitor {
      */
     public void setup();
 
+
     /**
      * Invoked by the export processor once for each revision encountered in the ledger export.
      *
      * @param revision The revision to process
+     * @param tableId The ID of the ledger table the revision belongs to.  This can be used to distinguish
+     *                between dropped tables that have the same name, or a dropped table with the same name
+     *                as an active table.
      * @param tableName The name of the ledger table the revision belongs to
      */
-    public void visit(IonStruct revision, String tableName);
+    public void visit(IonStruct revision, String tableId, String tableName);
+
 
     /**
      * Performs any tear down work of the visitor after the ledger export has been processed.  Invoked once per export.

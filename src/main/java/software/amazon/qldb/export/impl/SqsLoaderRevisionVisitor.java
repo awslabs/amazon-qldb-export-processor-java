@@ -65,7 +65,7 @@ public class SqsLoaderRevisionVisitor implements RevisionVisitor {
     }
 
     @Override
-    public void visit(IonStruct revision, String tableName) {
+    public void visit(IonStruct revision, String tableId, String tableName) {
         LoadEvent event = LoadEvent.fromCommittedRevision(revision, tableName);
 
         SendMessageRequest.Builder builder = SendMessageRequest.builder();

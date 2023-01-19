@@ -46,8 +46,8 @@ public class ExportPrettyPrintVisitor implements BlockVisitor, RevisionVisitor {
     }
 
     @Override
-    public void visit(IonStruct revision, String tableName) {
-        LOGGER.info("REVISION in table " + tableName);
+    public void visit(IonStruct revision, String tableId, String tableName) {
+        LOGGER.info("REVISION in table " + tableName + " [" + tableId + "]");
         LOGGER.info(revision.toPrettyString());
     }
 }

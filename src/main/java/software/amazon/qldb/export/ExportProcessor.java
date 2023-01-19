@@ -19,12 +19,15 @@ package software.amazon.qldb.export;
 
 import com.amazon.ion.*;
 import com.amazon.ion.system.IonSystemBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.services.qldb.QldbClient;
 import software.amazon.awssdk.services.qldb.model.*;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.*;
 
@@ -36,12 +39,14 @@ import java.util.*;
  * actual work required for the export.
  */
 public class ExportProcessor {
+    private final static Logger LOGGER = LoggerFactory.getLogger(ExportProcessor.class);
+
     private final IonSystem ionSystem = IonSystemBuilder.standard().build();
     private final S3Client s3Client;
     private final QldbClient qldbClient;
 
-    private final BlockVisitor blockVisitor;
-    private final RevisionVisitor revisionVisitor;
+    private final List<BlockVisitor> blockVisitors = new ArrayList<>();
+    private final List<RevisionVisitor> revisionVisitors = new ArrayList<>();
 
     private final int startBlock;
     private final int endBlock;
@@ -50,12 +55,12 @@ public class ExportProcessor {
     private int currentBlockNum = -1;
 
 
-    private ExportProcessor(S3Client s3Client, QldbClient qldbClient, BlockVisitor blockVisitor,
-                            RevisionVisitor revisionVisitor, int startBlock, int endBlock) {
+    private ExportProcessor(S3Client s3Client, QldbClient qldbClient, List<BlockVisitor> blockVisitors,
+                            List<RevisionVisitor> revisionVisitors, int startBlock, int endBlock) {
         this.s3Client = s3Client == null ? S3Client.builder().build() : s3Client;
         this.qldbClient = qldbClient == null ? QldbClient.builder().build() : qldbClient;
-        this.blockVisitor = blockVisitor;
-        this.revisionVisitor = revisionVisitor;
+        this.blockVisitors.addAll(blockVisitors);
+        this.revisionVisitors.addAll(revisionVisitors);
         this.startBlock = startBlock;
         this.endBlock = endBlock;
     }
@@ -107,7 +112,6 @@ public class ExportProcessor {
      * @param manifestPath The S3 key (path) of the completed manifest file.
      */
     public void processExport(String bucket, String manifestPath) {
-
         if (bucket == null)
             throw new IllegalArgumentException("S3 bucket name required");
 
@@ -119,83 +123,7 @@ public class ExportProcessor {
 
         try {
             setup();
-
-            boolean endBlockReached = false;
-
-            for (String key : getExportFileKeys(bucket, manifestPath)) {
-
-                // Don't bother fetching this file from S3 if its blocks are out-of-range
-                if ((this.startBlock > -1 || this.endBlock > -1) && !blocksInRange(key)) {
-                    continue;
-                }
-
-                List<IonStruct> blocks = getJournalBlocks(bucket, key);
-                for (IonStruct block : blocks) {
-
-                    IonStruct blockAddress = (IonStruct) block.get("blockAddress");
-                    currentBlockNum = ((IonInt) blockAddress.get("sequenceNo")).intValue();
-
-                    if (this.startBlock > -1 && currentBlockNum < startBlock)
-                        continue;
-
-                    if (this.endBlock > -1 && currentBlockNum > endBlock) {
-                        endBlockReached = true;
-                        break;
-                    }
-
-                    if (blockVisitor != null) {
-                        blockVisitor.visit(block);
-                    }
-
-                    if (revisionVisitor == null)
-                        continue;
-
-                    if (!block.containsKey("revisions"))
-                        continue;
-
-                    if (!block.containsKey("transactionInfo"))
-                        continue;
-
-                    IonStruct txInfo = (IonStruct) block.get("transactionInfo");
-                    if (!txInfo.containsKey("documents"))
-                        continue;
-
-                    Map<String, String> tableMapping = new HashMap<>();
-
-                    //
-                    // The revisions in the block don't contain information about the table they are in.  Instead, the
-                    // 'transactionInfo' section of the block has the mapping of the table to the document ID.  Get that
-                    // mapping for use below.
-                    //
-                    IonStruct txDocInfo = (IonStruct) txInfo.get("documents");
-                    for (IonValue value : txDocInfo) {
-                        IonStruct val = (IonStruct) value;
-                        tableMapping.put(val.getFieldName(), ((IonString) val.get("tableName")).stringValue());
-                    }
-
-                    //
-                    // Now iterate over the revisions in the block.
-                    //
-                    for (IonValue ionValue : (IonList) block.get("revisions")) {
-                        IonStruct revision = (IonStruct) ionValue;
-
-                        if (!revision.containsKey("metadata"))
-                            continue;
-
-                        IonStruct metadata = (IonStruct) revision.get("metadata");
-                        String documentId = ((IonString) metadata.get("id")).stringValue();
-
-                        String table = tableMapping.get(documentId);
-                        if (table == null)
-                            table = "***UNKNOWN***";
-
-                        revisionVisitor.visit(revision, table);
-                    }
-                }
-
-                if (endBlockReached)
-                    break;
-            }
+            processManifest(bucket, manifestPath);
         } catch (Exception e) {
             if (currentBlockNum < 0) {
                 throw new RuntimeException("Processing failed prior to first block", e);
@@ -204,6 +132,152 @@ public class ExportProcessor {
             }
         } finally {
             teardown();
+        }
+    }
+
+
+    /**
+     * Processes multiple exports, given the locations of the completed manifest files in S3.
+     *
+     * @param bucket The bucket where the export files are located
+     * @param manifestPaths List of the S3 keys (paths) of the completed manifest files.
+     */
+    public void processExports(String bucket, List<String> manifestPaths) {
+        if (bucket == null)
+            throw new IllegalArgumentException("S3 bucket name required");
+
+        if (manifestPaths == null || manifestPaths.size() == 0)
+            throw new IllegalArgumentException("S3 paths for manifest file are required");
+
+        String checkStrand = null;
+
+        List<ManifestStruct> structs = new ArrayList<>();
+
+        // Look over the manifest files for problems before we start a potentially long process.
+        try {
+            for (String path : manifestPaths) {
+
+                // Make sure we have a path to a completed manifest file
+                File file = new File(path);
+                String name = file.getName();
+                if (!name.matches("\\w+\\.\\w+\\.completed\\.manifest"))
+                    throw new IllegalArgumentException("Invalid manifest path \"" + path + "\"");
+
+                // Make sure all the paths relate to the same source ledger strand
+                String[] parts = name.split("\\.");
+                if (checkStrand == null) {
+                    checkStrand = parts[1];
+                } else {
+                    if (!checkStrand.equals(parts[1]))
+                        throw new IllegalArgumentException("Exports must all be from the same strand");
+
+                    checkStrand = parts[1];
+                }
+
+                // Fetch the start and end blocks of each manifest.  We'll need this in a minute.
+                ManifestStruct struct = getManifestBlockRange(bucket, path);
+                if (struct != null)
+                    structs.add(struct);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Unable to fetch manifest files from S3", e);
+        }
+
+        // Sort the manifests by their starting block number.  Can't trust the caller to give us a sorted list.
+        structs.sort(new Comparator<ManifestStruct>() {
+            @Override
+            public int compare(ManifestStruct o1, ManifestStruct o2) {
+                return Integer.compare(o1.firstBlock, o2.firstBlock);
+            }
+        });
+
+        // Make sure we have a contiguous, non-overlapping set of exports
+        for (int i = 1; i < structs.size(); i++) {
+            if (structs.get(i).firstBlock != structs.get(i - 1).lastBlock + 1)
+                throw new IllegalArgumentException("Manifests overlap or are not contiguous");
+        }
+
+        // Process the exports in order
+        for (ManifestStruct mf : structs) {
+            processExport(bucket, mf.path);
+        }
+    }
+
+
+    private void processManifest(String bucket, String manifestPath) throws IOException {
+
+        boolean endBlockReached = false;
+
+        for (String key : getExportFileKeys(bucket, manifestPath)) {
+
+            // Don't bother fetching this file from S3 if its blocks are out-of-range
+            if ((this.startBlock > -1 || this.endBlock > -1) && !blocksInRange(key)) {
+                continue;
+            }
+
+            List<IonStruct> blocks = getJournalBlocks(bucket, key);
+            for (IonStruct block : blocks) {
+
+                IonStruct blockAddress = (IonStruct) block.get("blockAddress");
+                currentBlockNum = ((IonInt) blockAddress.get("sequenceNo")).intValue();
+
+                if (this.startBlock > -1 && currentBlockNum < startBlock)
+                    continue;
+
+                if (this.endBlock > -1 && currentBlockNum > endBlock) {
+                    endBlockReached = true;
+                    break;
+                }
+
+                if (blockVisitors.size() > 0) {
+                    for (BlockVisitor bv : blockVisitors)
+                        bv.visit(block);
+                }
+
+                if (revisionVisitors.size() == 0)
+                    continue;
+
+                if (!block.containsKey("revisions"))
+                    continue;
+
+                if (!block.containsKey("transactionInfo"))
+                    continue;
+
+                IonStruct txInfo = (IonStruct) block.get("transactionInfo");
+                if (!txInfo.containsKey("documents"))
+                    continue;
+
+                IonStruct txDocInfo = (IonStruct) txInfo.get("documents");
+
+                //
+                // Now iterate over the revisions in the block.
+                //
+                for (IonValue ionValue : (IonList) block.get("revisions")) {
+                    IonStruct revision = (IonStruct) ionValue;
+
+                    if (!revision.containsKey("metadata"))
+                        continue;
+
+                    IonStruct metadata = (IonStruct) revision.get("metadata");
+                    String documentId = ((IonString) metadata.get("id")).stringValue();
+
+                    String tableName = "***UNKNOWN***";
+                    String tableId = "***UNKNOWN***";
+
+                    if (txDocInfo.containsKey(documentId)) {
+                        IonStruct tableInfo = (IonStruct) txDocInfo.get(documentId);
+                        tableName = ((IonString) tableInfo.get("tableName")).stringValue();
+                        tableId = ((IonString) tableInfo.get("tableId")).stringValue();
+                    }
+
+                    for (RevisionVisitor rv : revisionVisitors) {
+                        rv.visit(revision, tableId, tableName);
+                    }
+                }
+            }
+
+            if (endBlockReached)
+                break;
         }
     }
 
@@ -274,7 +348,7 @@ public class ExportProcessor {
 
 
     /**
-     * Identifies whether or not an export data file should be fetched from S3, given the blocks
+     * Identifies whether an export data file should be fetched from S3, given the blocks
      * it contains.  If the start and/or end blocks are configured for this export processor, data
      * files will be skipped if their blocks are not in the desired range of blocks to process.
      */
@@ -288,28 +362,81 @@ public class ExportProcessor {
         if (this.endBlock > -1 && Integer.parseInt(parts2[0]) > this.endBlock)
             return false;
 
-        if (this.startBlock > -1 && Integer.parseInt(parts2[1]) < this.startBlock)
-            return false;
+        return this.startBlock <= -1 || Integer.parseInt(parts2[1]) >= this.startBlock;
+    }
 
-        return true;
+
+    private ManifestStruct getManifestBlockRange(String bucket, String path) throws IOException {
+        GetObjectRequest gor = GetObjectRequest.builder()
+                .bucket(bucket)
+                .key(path)
+                .build();
+
+        ManifestStruct struct = new ManifestStruct();
+        struct.path = path;
+
+        try (ResponseInputStream<GetObjectResponse> stream = s3Client.getObject(gor);
+             IonReader ionReader = ionSystem.newReader(stream)) {
+
+            ionReader.next();
+            IonStruct ionStruct = (IonStruct) ionSystem.newValue(ionReader);
+            IonList ionKeysList = (IonList) ionStruct.get("keys");
+            if (ionKeysList.size() == 0)
+                return null;
+
+            IonValue ion = ionKeysList.get(0);
+            String key = ((IonString) ion).stringValue();
+            String[] parts = key.split("\\.");
+            parts = parts[parts.length - 2].split("-");
+
+            struct.firstBlock = Integer.parseInt(parts[0]);
+
+            if (ionKeysList.size() > 1) {
+                ion = ionKeysList.get(ionKeysList.size() - 1);
+                key = ((IonString) ion).stringValue();
+                parts = key.split("\\.");
+                parts = parts[parts.length - 2].split("-");
+            }
+
+            struct.lastBlock = Integer.parseInt(parts[1]);
+        }
+
+        return struct;
     }
 
 
     private void setup() {
-        if (revisionVisitor != null)
-            revisionVisitor.setup();
+        for (RevisionVisitor rv : revisionVisitors)
+            rv.setup();
 
-        if (blockVisitor != null)
-            blockVisitor.setup();
+        for (BlockVisitor bv : blockVisitors)
+            bv.setup();
     }
 
 
     private void teardown() {
-        if (revisionVisitor != null)
-            revisionVisitor.teardown();
+        for (RevisionVisitor rv : revisionVisitors) {
+            try {
+                rv.teardown();
+            } catch (Exception e) {
+                LOGGER.warn("Error tearing down revision visitor " + rv.getClass().getName(), e);
+            }
+        }
 
-        if (blockVisitor != null)
-            blockVisitor.teardown();
+        for (BlockVisitor bv : blockVisitors) {
+            try {
+                bv.teardown();
+            } catch (Exception e) {
+                LOGGER.warn("Error tearing down block visitor " + bv.getClass().getName(), e);
+            }
+        }
+    }
+
+
+    private static class ManifestStruct {
+        String path;
+        int firstBlock;
+        int lastBlock;
     }
 
 
@@ -322,8 +449,8 @@ public class ExportProcessor {
         private S3Client s3Client = S3Client.builder().build();
         private QldbClient qldbClient = QldbClient.builder().build();
 
-        private BlockVisitor blockVisitor;
-        private RevisionVisitor revisionVisitor;
+        private List<BlockVisitor> blockVisitors = new ArrayList<>();
+        private List<RevisionVisitor> revisionVisitors = new ArrayList<>();
 
         private int startBlock = -1;
         private int endBlock = -1;
@@ -336,13 +463,26 @@ public class ExportProcessor {
 
 
         public ExportProcesserBuilder blockVisitor(BlockVisitor blockVisitor) {
-            this.blockVisitor = blockVisitor;
+            blockVisitors.clear();
+            blockVisitors.add(blockVisitor);
             return this;
         }
 
+        public ExportProcesserBuilder blockVisitors(List<BlockVisitor> bvs) {
+            blockVisitors.clear();
+            blockVisitors.addAll(bvs);
+            return this;
+        }
 
         public ExportProcesserBuilder revisionVisitor(RevisionVisitor revisionVisitor) {
-            this.revisionVisitor = revisionVisitor;
+            revisionVisitors.clear();
+            revisionVisitors.add(revisionVisitor);
+            return this;
+        }
+
+        public ExportProcesserBuilder revisionVisitors(List<RevisionVisitor> rvs) {
+            revisionVisitors.clear();
+            revisionVisitors.addAll(rvs);
             return this;
         }
 
@@ -381,7 +521,7 @@ public class ExportProcessor {
         }
 
         public ExportProcessor build() {
-            return new ExportProcessor(s3Client, qldbClient, blockVisitor, revisionVisitor, startBlock, endBlock);
+            return new ExportProcessor(s3Client, qldbClient, blockVisitors, revisionVisitors, startBlock, endBlock);
         }
     }
 }
