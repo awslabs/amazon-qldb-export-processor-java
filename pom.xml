@@ -240,6 +240,26 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 </executions>
             </plugin>
 
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <appendAssemblyId>false</appendAssemblyId>
+                            <descriptors>
+                                <descriptor>src/main/assembly/zip.xml</descriptor>
+                            </descriptors>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+
             <!-- Build the uber-jar for Lambda deployment -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
