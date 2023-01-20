@@ -197,9 +197,20 @@ public class ExportProcessor {
                 throw new IllegalArgumentException("Manifests overlap or are not contiguous");
         }
 
-        // Process the exports in order
-        for (ManifestStruct mf : structs) {
-            processExport(bucket, mf.path);
+        // Now Process the exports in order
+        try {
+            setup();
+            for (ManifestStruct mf : structs) {
+                processManifest(bucket, mf.path);
+            }
+        } catch (Exception e) {
+            if (currentBlockNum < 0) {
+                throw new RuntimeException("Processing failed prior to first block", e);
+            } else {
+                throw new RuntimeException("Processing failed at block " + currentBlockNum, e);
+            }
+        } finally {
+            teardown();
         }
     }
 
@@ -474,6 +485,12 @@ public class ExportProcessor {
             return this;
         }
 
+        public ExportProcesserBuilder addBlockVisitor(BlockVisitor bv) {
+            if (bv != null)
+                blockVisitors.add(bv);
+            return this;
+        }
+
         public ExportProcesserBuilder revisionVisitor(RevisionVisitor revisionVisitor) {
             revisionVisitors.clear();
             revisionVisitors.add(revisionVisitor);
@@ -483,6 +500,12 @@ public class ExportProcessor {
         public ExportProcesserBuilder revisionVisitors(List<RevisionVisitor> rvs) {
             revisionVisitors.clear();
             revisionVisitors.addAll(rvs);
+            return this;
+        }
+
+        public ExportProcesserBuilder addRevisionVisitor(RevisionVisitor rv) {
+            if (rv != null)
+                revisionVisitors.add(rv);
             return this;
         }
 
