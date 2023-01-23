@@ -65,7 +65,6 @@ public class SqsLedgerLoader {
                 .hasArg()
                 .build());
 
-
         //
         // Second method:  Accept a bucket name and path(s) to the manifest file(s).
         //

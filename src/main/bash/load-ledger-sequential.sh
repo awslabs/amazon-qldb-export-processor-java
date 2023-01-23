@@ -23,4 +23,4 @@ do
   CP=$CP:lib/$jar
 done
 
-java -cp $CP software.amazon.qldb.export.app.SqsLedgerLoader $@
+java -cp $CP software.amazon.qldb.export.app.SequentialExportLoader $@

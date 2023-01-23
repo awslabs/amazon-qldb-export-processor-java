@@ -17,10 +17,13 @@
  */
 package software.amazon.qldb.export.app;
 
+import org.apache.commons.cli.*;
 import software.amazon.qldb.export.ExportProcessor;
 import software.amazon.qldb.export.impl.ExportPrettyPrintVisitor;
 
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.util.Arrays;
 
 
 /**
@@ -29,15 +32,88 @@ import java.io.IOException;
 public class ExportBlockPrettyPrinter {
 
     public static void main(String[] args) throws IOException {
-        if (args.length < 2) {
-            System.err.println("Usage:  ExportBlockPrettyPrinter ledgerName exportId");
-            System.exit(-1);
+        Options options = new Options();
+
+        //
+        // There are two ways to find the export(s) we need to process.
+        //
+        // First method:
+        //
+        // Find the location of the export manifest file by querying the QLDB service
+        // with a source ledger name and the ID of the export to process.  The source
+        // ledger must exist for this option.
+        //
+        options.addOption(Option.builder("s")
+                .desc("Name of source ledger")
+                .longOpt("source-ledger")
+                .hasArg()
+                .build());
+
+        options.addOption(Option.builder("x")
+                .desc("Export ID")
+                .longOpt("export-id")
+                .hasArg()
+                .build());
+
+        //
+        // Second method:  Accept a bucket name and path(s) to the manifest file(s).
+        //
+        options.addOption(Option.builder("b")
+                .desc("Name of S3 bucket containing exports")
+                .longOpt("bucket")
+                .hasArg()
+                .build());
+
+        options.addOption(Option.builder("mp")
+                .desc("S3 path (key) to a completed export manifest file. Specify this argument multiple times to process multiple exports that cover a contiguous, non-overlapping set of blocks from the same ledger.")
+                .longOpt("manifest")
+                .hasArg()
+                .build());
+
+        try {
+            CommandLineParser parser = new DefaultParser();
+            CommandLine line = parser.parse(options, args);
+
+            ExportProcessor processor = ExportProcessor.builder()
+                    .revisionVisitor(new ExportPrettyPrintVisitor())
+                    .build();
+
+            if (line.hasOption("s") && line.hasOption("x")) {
+                processor.process(line.getOptionValue("s"), line.getOptionValue("x"));
+            } else if (line.hasOption("b") && line.hasOption("mp")) {
+                String[] values = line.getOptionValues("mp");
+                if (values.length == 1)
+                    processor.processExport(line.getOptionValue("b"), values[0]);
+                else {
+                    processor.processExports(line.getOptionValue("b"), Arrays.asList(values));
+                }
+            } else {
+                printUsage("Missing one or more required options", options);
+                System.exit(-1);
+            }
+        } catch (ParseException pe) {
+            printUsage(pe.getMessage(), options);
         }
+    }
 
-        ExportProcessor processor = ExportProcessor.builder()
-                .blockVisitor(new ExportPrettyPrintVisitor())
-                .build();
 
-        processor.process(args[0], args[1]);
+    private static void printUsage(String message, Options options) {
+        try (PrintWriter pw = new PrintWriter(System.err)) {
+            pw.println(message);
+
+            HelpFormatter formatter = new HelpFormatter();
+            Options ops = new Options();
+
+            pw.println("\nSpecify both of these:");
+            ops.addOption(options.getOption("s"));
+            ops.addOption(options.getOption("x"));
+            formatter.printOptions(pw, formatter.getWidth(), ops, formatter.getLeftPadding(), formatter.getLeftPadding());
+
+            pw.println("\nOr both of these:");
+            ops = new Options();
+            ops.addOption(options.getOption("b"));
+            ops.addOption(options.getOption("mp"));
+            formatter.printOptions(pw, formatter.getWidth(), ops, formatter.getLeftPadding(), formatter.getLeftPadding());
+        }
     }
 }

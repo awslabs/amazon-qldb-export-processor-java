@@ -17,11 +17,14 @@
  */
 package software.amazon.qldb.export.app;
 
+import org.apache.commons.cli.*;
 import software.amazon.awssdk.services.sns.SnsClient;
 import software.amazon.qldb.export.ExportProcessor;
 import software.amazon.qldb.export.impl.SnsLoaderRevisionVisitor;
 
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.util.Arrays;
 
 
 /**
@@ -31,21 +34,106 @@ import java.io.IOException;
  */
 public class SnsLedgerLoader {
     public static void main(String[] args) throws IOException {
-        if (args.length < 3) {
-            System.err.println("Usage:  SnsLedgerLoader sourceLedgerName exportId topicArn");
-            System.exit(-1);
+        Options options = new Options();
+
+        options.addOption(Option.builder("t")
+                .required()
+                .desc("ARN of the SNS topic to send load records into")
+                .longOpt("topic-arn")
+                .hasArg()
+                .build());
+
+        //
+        // There are two ways to find the export(s) we need to process.
+        //
+        // First method:
+        //
+        // Find the location of the export manifest file by querying the QLDB service
+        // with a source ledger name and the ID of the export to process.  The source
+        // ledger must exist for this option.
+        //
+        options.addOption(Option.builder("s")
+                .desc("Name of source ledger")
+                .longOpt("source-ledger")
+                .hasArg()
+                .build());
+
+        options.addOption(Option.builder("x")
+                .desc("Export ID")
+                .longOpt("export-id")
+                .hasArg()
+                .build());
+
+        //
+        // Second method:  Accept a bucket name and path(s) to the manifest file(s).
+        //
+        options.addOption(Option.builder("b")
+                .desc("Name of S3 bucket containing exports")
+                .longOpt("bucket")
+                .hasArg()
+                .build());
+
+        options.addOption(Option.builder("mp")
+                .desc("S3 path (key) to a completed export manifest file. Specify this argument multiple times to process multiple exports that cover a contiguous, non-overlapping set of blocks from the same ledger.")
+                .longOpt("manifest")
+                .hasArg()
+                .build());
+
+        try {
+            CommandLineParser parser = new DefaultParser();
+            CommandLine line = parser.parse(options, args);
+
+            SnsClient sns = SnsClient.builder().build();
+            SnsLoaderRevisionVisitor visitor = SnsLoaderRevisionVisitor.builder()
+                    .topicArn(line.getOptionValue("t"))
+                    .snsClient(sns)
+                    .build();
+
+            ExportProcessor processor = ExportProcessor.builder()
+                    .revisionVisitor(visitor)
+                    .build();
+
+            if (line.hasOption("s") && line.hasOption("x")) {
+                processor.process(line.getOptionValue("s"), line.getOptionValue("x"));
+            } else if (line.hasOption("b") && line.hasOption("mp")) {
+                String[] values = line.getOptionValues("mp");
+                if (values.length == 1)
+                    processor.processExport(line.getOptionValue("b"), values[0]);
+                else {
+                    processor.processExports(line.getOptionValue("b"), Arrays.asList(values));
+                }
+            } else {
+                printUsage("Missing one or more required options", options);
+                System.exit(-1);
+            }
+        } catch (ParseException pe) {
+            printUsage(pe.getMessage(), options);
         }
+    }
 
-        SnsClient sns = SnsClient.builder().build();
-        SnsLoaderRevisionVisitor visitor = SnsLoaderRevisionVisitor.builder()
-                .topicArn(args[2])
-                .snsClient(sns)
-                .build();
 
-        ExportProcessor processor = ExportProcessor.builder()
-                .revisionVisitor(visitor)
-                .build();
+    private static void printUsage(String message, Options options) {
+        try (PrintWriter pw = new PrintWriter(System.err)) {
+            pw.println(message);
 
-        processor.process(args[0], args[1]);
+            HelpFormatter formatter = new HelpFormatter();
+
+            pw.println("\nRequired:");
+            Options ops = new Options();
+            ops.addOption(options.getOption("t"));
+            formatter.printOptions(pw, formatter.getWidth(), ops, formatter.getLeftPadding(), formatter.getLeftPadding());
+
+            pw.println("\nSpecify both of these:");
+            ops = new Options();
+            ops.addOption(options.getOption("s"));
+            ops.addOption(options.getOption("x"));
+            formatter.printOptions(pw, formatter.getWidth(), ops, formatter.getLeftPadding(), formatter.getLeftPadding());
+
+            pw.println("\nOr both of these:");
+            ops = new Options();
+            ops.addOption(options.getOption("b"));
+            ops.addOption(options.getOption("mp"));
+            formatter.printOptions(pw, formatter.getWidth(), ops, formatter.getLeftPadding(), formatter.getLeftPadding());
+        }
     }
 }
