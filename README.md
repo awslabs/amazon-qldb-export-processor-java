@@ -113,7 +113,7 @@ ExportProcessor processor = ExportProcessor.builder()
         .addBlockVisitor(new DoThisOtherThingBlockVisitor())
         .build();
 
-processor.processExport("myBucket", "9BYkcVOzENo6Cf4fdrJI2W");
+processor.processExport("myBucket", "exports/1XTAdzxh1X4KNZlUyBKwR0.2ilSU3AWdLPCuTZig4osfI.completed.manifest");
 ```
 
 ### Using Pre-Built Applications
