@@ -80,6 +80,21 @@ public class SqsLedgerLoader {
                 .hasArg()
                 .build());
 
+        //
+        // Additional options
+        //
+        options.addOption(Option.builder("start")
+                .desc("Number of first block to process")
+                .longOpt("startBlock")
+                .hasArg()
+                .build());
+
+        options.addOption(Option.builder("end")
+                .desc("Number of last block to process")
+                .longOpt("endBlock")
+                .hasArg()
+                .build());
+
         try {
             CommandLineParser parser = new DefaultParser();
             CommandLine line = parser.parse(options, args);
@@ -90,9 +105,26 @@ public class SqsLedgerLoader {
                     .queueUrl(line.getOptionValue("q"))
                     .build();
 
-            ExportProcessor processor = ExportProcessor.builder()
-                    .revisionVisitor(visitor)
-                    .build();
+            ExportProcessor.ExportProcesserBuilder builder = ExportProcessor.builder().revisionVisitor(visitor);
+            if (line.hasOption("start")) {
+                try {
+                    builder.startBlock(Integer.parseInt(line.getOptionValue("start")));
+                } catch (NumberFormatException nfe) {
+                    printUsage("Start block must be numeric", options);
+                    System.exit(-1);
+                }
+            }
+
+            if (line.hasOption("end")) {
+                try {
+                    builder.endBlock(Integer.parseInt(line.getOptionValue("end")));
+                } catch (NumberFormatException nfe) {
+                    printUsage("End block must be numeric", options);
+                    System.exit(-1);
+                }
+            }
+
+            ExportProcessor processor = builder.build();
 
             if (line.hasOption("s") && line.hasOption("x")) {
                 processor.process(line.getOptionValue("s"), line.getOptionValue("x"));
@@ -134,6 +166,12 @@ public class SqsLedgerLoader {
             ops = new Options();
             ops.addOption(options.getOption("b"));
             ops.addOption(options.getOption("mp"));
+            formatter.printOptions(pw, formatter.getWidth(), ops, formatter.getLeftPadding(), formatter.getLeftPadding());
+
+            pw.println("\nOptional:");
+            ops = new Options();
+            ops.addOption(options.getOption("start"));
+            ops.addOption(options.getOption("end"));
             formatter.printOptions(pw, formatter.getWidth(), ops, formatter.getLeftPadding(), formatter.getLeftPadding());
         }
     }
