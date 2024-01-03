@@ -83,7 +83,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         <aws.sdk.version>2.17.129</aws.sdk.version>
         <aws.qldb.driver.version>2.3.1</aws.qldb.driver.version>
-        <amazon.ion.version>1.9.0</amazon.ion.version>
+        <amazon.ion.version>1.10.5</amazon.ion.version>
 
         <apache.commons.cli.version>1.5.0</apache.commons.cli.version>
         <log4j.version>2.17.1</log4j.version>
